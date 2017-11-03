@@ -24,12 +24,12 @@ _OPENSSL_VERSION="1.1.0e"
 ################
 
 _pkgname="ovmf"
-pkgname="${_pkgname}-git"
+pkgname="${_pkgname}-git-macboot"
 
-pkgver=21562.d3e0c996d5
+pkgver=22594.5cf459731f
 pkgrel=1
 pkgdesc="UEFI Firmware (OVMF) with Secure Boot Support - for Virtual Machines (QEMU) - from Tianocore EDK2 - GIT Version"
-url="https://tianocore.github.io/ovmf/"
+url="https://www.contrib.andrew.cmu.edu/~somlo/OSXKVM/"
 arch=('x86_64' 'i686')
 license=('BSD')
 
@@ -44,10 +44,22 @@ install="${_pkgname}.install"
 
 source=("${_TIANO_DIR_}::git+https://github.com/tianocore/edk2.git#branch=master"
         "https://www.openssl.org/source/openssl-${_OPENSSL_VERSION}.tar.gz"
+		0001-FswHfsPlus-add-File-System-Wrapper-FSW-interface-cod.patch
+		0002-FswHfsPlus-connect-FSW-code-to-EDK2-fix-compile-disc.patch
+		0003-FswHfsPlus-implement-FSW-driver-for-the-HFS-file-sys.patch
+		0004-EdkCompatibilityPkg-allow-ConsoleControl-protocol-to.patch
+		0005-OvmfPkg-add-Apple-boot-support.patch
+		0006-OvmfPkg-enable-AppleSupport-library-for-Ovmf-firmwar.patch
 )
 
 sha1sums=('SKIP'
-          '8bbbaf36feffadd3cb9110912a8192e665ebca4b')
+          '8bbbaf36feffadd3cb9110912a8192e665ebca4b'
+          '0b68a1c3079b7ef474f5929d29713a3d5e903902'
+          '924657f12aeccc799ee416e0727e770d0b6eefa7'
+          'ab622fa0b5ea2ef914e1ae613f6e6f55019fdda0'
+          'be67860cfd8d23f49b0335ccf301c0ac3dd20c00'
+          '2ae8d6794c859c624c7588c9d103d924535d8b4d'
+          '7b1ea5fd02ad6b0f1b22855b6be0972f1c9732aa')
 
 noextract=("openssl-${_OPENSSL_VERSION}.tar.gz")
 
@@ -130,6 +142,10 @@ prepare() {
 	_prepare_openssl_udk_dir
 	echo
 	
+	cd "${_UDK_DIR}/"
+	for p in ${srcdir}/*.patch; do
+		patch -p1 < $p
+	done
 }
 
 build() {
@@ -175,9 +191,10 @@ build() {
 	unset LDFLAGS
 	unset MAKEFLAGS
 	
-	msg "Compile OVMF IA32 binary"
-	"${_UDK_DIR}/OvmfPkg/build.sh" -a "IA32" -b "${_UDK_TARGET}" -t "${_COMPILER}" -D "SECURE_BOOT_ENABLE=TRUE" -D "FD_SIZE_2MB" --enable-flash
-	echo
+	# Currently broken upstream
+	#msg "Compile OVMF IA32 binary"
+	#"${_UDK_DIR}/OvmfPkg/build.sh" -a "IA32" -b "${_UDK_TARGET}" -t "${_COMPILER}" -D "SECURE_BOOT_ENABLE=TRUE" -D "FD_SIZE_2MB" --enable-flash
+	#echo
 	
 }
 
@@ -193,10 +210,11 @@ package() {
 		install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_X64_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF_VARS.fd" "${pkgdir}/usr/share/ovmf/x64/ovmf_vars_x64.bin"
 	fi
 	
-	msg "Install the OVMF IA32 image"
-	install -d "${pkgdir}/usr/share/ovmf/ia32/"
-	install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_ia32.bin"
-	install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF_CODE.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_code_ia32.bin"
-	install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF_VARS.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_vars_ia32.bin"
+	# Currently broken upstream
+	#msg "Install the OVMF IA32 image"
+	#install -d "${pkgdir}/usr/share/ovmf/ia32/"
+	#install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_ia32.bin"
+	#install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF_CODE.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_code_ia32.bin"
+	#install -D -m0644 "${_UDK_DIR}/Build/${_UDK_OVMF_IA32_PKG}/${_UDK_TARGET}_${_COMPILER}/FV/OVMF_VARS.fd" "${pkgdir}/usr/share/ovmf/ia32/ovmf_vars_ia32.bin"
 	
 }

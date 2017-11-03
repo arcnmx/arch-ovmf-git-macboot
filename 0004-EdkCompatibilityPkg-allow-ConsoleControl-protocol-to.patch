@@ -1,0 +1,44 @@
+From 6eab0c2c086c8f48744ec41e9e6bf9ac90ec88d2 Mon Sep 17 00:00:00 2001
+From: "Gabriel L. Somlo" <gsomlo@gmail.com>
+Date: Wed, 2 Mar 2016 11:02:46 -0500
+Subject: [PATCH 4/6] EdkCompatibilityPkg: allow ConsoleControl protocol to be
+ used
+
+Apple's bootloader requires the ConsoleControl protocol to be
+implemented. By adding the Foundation path to the package description,
+the ConsoleProtocol can be used in Ovmf without the need of copying it
+to Include/Protocol from MdePkg.
+
+The gEfiConsoleControlProtocolGuid is added to the .dec file, to be
+consumed by Ovmf.
+
+Contributed-under: TianoCore Contribution Agreement 1.0
+Signed-off-by: Reza Jelveh <reza.jelveh@tuhh.de>
+Signed-off-by: Gabriel Somlo <gsomlo@gmail.com>
+---
+ EdkCompatibilityPkg/EdkCompatibilityPkg.dec | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/EdkCompatibilityPkg/EdkCompatibilityPkg.dec b/EdkCompatibilityPkg/EdkCompatibilityPkg.dec
+index 1fd1251878..0a9225d459 100644
+--- a/EdkCompatibilityPkg/EdkCompatibilityPkg.dec
++++ b/EdkCompatibilityPkg/EdkCompatibilityPkg.dec
+@@ -25,6 +25,7 @@
+   
+ [Includes]
+   Compatibility/Include
++  Foundation
+ 
+ [LibraryClasses]
+   ##  @libraryclass  Provides functions for language conversion between
+@@ -44,6 +45,7 @@
+ [Protocols]
+   gEfiPrintProtocolGuid                   = { 0xdf2d868e, 0x32fc, 0x4cf0, {0x8e, 0x6b, 0xff, 0xd9, 0x5d, 0x13, 0x43, 0xd0} }
+   gEfiSmmBaseHelperReadyProtocolGuid      = { 0x910dca07, 0x1f94, 0x4ee7, { 0xaf, 0x2f, 0xff, 0x72, 0xf3, 0x15, 0x43, 0x53 } }
++  gEfiConsoleControlProtocolGuid          = { 0xf42f7782, 0x012e, 0x4c12, {0x99, 0x56, 0x49, 0xf9, 0x43, 0x04, 0xf7, 0x21 }}
+ 
+ [PcdsDynamic, PcdsDynamicEx]
+   gEfiEdkCompatibilityPkgTokenSpaceGuid.BootScriptThunkDataPtr|0x0|UINT64|0x30000001
+-- 
+2.15.0
+

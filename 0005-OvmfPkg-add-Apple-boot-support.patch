@@ -1,0 +1,741 @@
+From 221e4d73aae06ad6492346b794a429176994cd3a Mon Sep 17 00:00:00 2001
+From: "Gabriel L. Somlo" <gsomlo@gmail.com>
+Date: Thu, 2 Mar 2017 17:23:49 -0500
+Subject: [PATCH 5/6] OvmfPkg: add Apple boot support
+
+Apple's boot.efi checks if the ConsoleControl protocol returns
+EFI_SUCCESS in both GetMode and SetMode.
+
+Apple uses a kernel extension to make parts of the DataHub protocol
+available to the xnu kernel. The xnu kernel then checks for FSB
+frequency and if it's not found fails with:
+
+"tsc_init: EFI not supported!"
+https://github.com/opensource-apple/xnu/blob/10.9/osfmk/i386/tsc.c
+
+Also, some firmware settings are added to AppleSupport and written
+to nvram.
+
+Lastly, use (already present) HFS+ filesystem driver to locate, load,
+and launch the Apple-provided OS X bootloader.
+
+Contributed-under: TianoCore Contribution Agreement 1.0
+Signed-off-by: Reza Jelveh <reza.jelveh@tuhh.de>
+Signed-off-by: Gabriel Somlo <gsomlo@gmail.com>
+---
+ OvmfPkg/Include/Library/AppleSupportLib.h          |  28 ++++
+ OvmfPkg/Library/AppleSupportLib/AppleSupport.c     | 107 +++++++++++++++
+ .../Library/AppleSupportLib/AppleSupportLib.inf    |  50 +++++++
+ OvmfPkg/Library/AppleSupportLib/Bds.c              | 151 +++++++++++++++++++++
+ OvmfPkg/Library/AppleSupportLib/Bds.h              |  21 +++
+ OvmfPkg/Library/AppleSupportLib/Common.h           |  24 ++++
+ OvmfPkg/Library/AppleSupportLib/Console.c          |  86 ++++++++++++
+ OvmfPkg/Library/AppleSupportLib/Console.h          |  28 ++++
+ OvmfPkg/Library/AppleSupportLib/Datahub.c          | 104 ++++++++++++++
+ OvmfPkg/Library/AppleSupportLib/Datahub.h          |  32 +++++
+ 10 files changed, 631 insertions(+)
+ create mode 100644 OvmfPkg/Include/Library/AppleSupportLib.h
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/AppleSupport.c
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Bds.c
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Bds.h
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Common.h
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Console.c
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Console.h
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Datahub.c
+ create mode 100644 OvmfPkg/Library/AppleSupportLib/Datahub.h
+
+diff --git a/OvmfPkg/Include/Library/AppleSupportLib.h b/OvmfPkg/Include/Library/AppleSupportLib.h
+new file mode 100644
+index 0000000000..583d06b9f7
+--- /dev/null
++++ b/OvmfPkg/Include/Library/AppleSupportLib.h
+@@ -0,0 +1,28 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#ifndef _APPLESUPPORT_LIB_INCLUDED_
++#define _APPLESUPPORT_LIB_INCLUDED_
++
++EFI_STATUS
++EFIAPI
++InitializeAppleSupport (
++  IN EFI_HANDLE         ImageHandle,
++  IN EFI_SYSTEM_TABLE   *SystemTable
++  );
++
++EFI_STATUS
++BdsBootApple ();
++
++#endif
+diff --git a/OvmfPkg/Library/AppleSupportLib/AppleSupport.c b/OvmfPkg/Library/AppleSupportLib/AppleSupport.c
+new file mode 100644
+index 0000000000..92f7d79da5
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/AppleSupport.c
+@@ -0,0 +1,107 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#include "Console.h"
++#include "Datahub.h"
++
++#include <Library/BaseLib.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <FrameworkDxe.h>
++#include <Guid/DataHubRecords.h>
++#include <Protocol/DataHub.h>
++#include <Library/UefiRuntimeServicesTableLib.h>
++
++
++EFI_GUID gAppleFirmwareVariableGuid = {
++    0x4D1EDE05, 0x38C7, 0x4A6A, {0x9C, 0xC6, 0x4B, 0xCC, 0xA8, 0xB3, 0x8C, 0x14 }
++};
++
++/**
++  Register Handler for the specified interrupt source.
++
++  @param This     Instance pointer for this protocol
++  @param Source   Hardware source of the interrupt
++  @param Handler  Callback for interrupt. NULL to unregister
++
++  @retval  EFI_SUCCESS            The firmware has successfully stored the variable and its data as
++  defined by the Attributes.
++  @retval  EFI_INVALID_PARAMETER  An invalid combination of attribute bits was supplied, or the
++  DataSize exceeds the maximum allowed.
++  @retval  EFI_INVALID_PARAMETER  VariableName is an empty Unicode string.
++  @retval  EFI_OUT_OF_RESOURCES   Not enough storage is available to hold the variable and its data.
++  @retval  EFI_DEVICE_ERROR       The variable could not be saved due to a hardware failure.
++  @retval  EFI_WRITE_PROTECTED    The variable in question is read-only.
++  @retval  EFI_WRITE_PROTECTED    The variable in question cannot be deleted.
++  @retval  EFI_SECURITY_VIOLATION The variable could not be written due to EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS
++  set but the AuthInfo does NOT pass the validation check carried
++  out by the firmware.
++
++**/
++EFI_STATUS
++InitializeFirmware ()
++{
++  EFI_STATUS          Status;
++
++  UINT32              BackgroundClear = 0x00000000;
++  UINT32              FwFeatures      = 0x80000015;
++  UINT32              FwFeaturesMask  = 0x800003ff;
++
++  Status = gRT->SetVariable(L"BackgroundClear",
++                            &gAppleFirmwareVariableGuid,
++                            EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
++                            sizeof(BackgroundClear), &BackgroundClear);
++
++  Status = gRT->SetVariable(L"FirmwareFeatures",
++                            &gAppleFirmwareVariableGuid,
++                            EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
++                            sizeof(FwFeatures), &FwFeatures);
++
++  Status = gRT->SetVariable(L"FirmwareFeaturesMask",
++                            &gAppleFirmwareVariableGuid,
++                            EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
++                            sizeof(FwFeaturesMask), &FwFeaturesMask);
++
++  return Status;
++}
++
++/**
++  Register driver.
++
++  @param  ImageHandle   of the loaded driver
++  @param  SystemTable   Pointer to the System Table
++
++  @retval EFI_SUCCESS   Driver registered
++
++**/
++EFI_STATUS
++EFIAPI
++InitializeAppleSupport (
++  IN EFI_HANDLE         ImageHandle,
++  IN EFI_SYSTEM_TABLE   *SystemTable
++  )
++{
++  EFI_STATUS                         Status;
++
++  Status = InitializeConsoleControl(ImageHandle);
++  ASSERT_EFI_ERROR (Status);
++
++  Status = InitializeDatahub(ImageHandle);
++  ASSERT_EFI_ERROR(Status);
++
++  Status = InitializeFirmware();
++  ASSERT_EFI_ERROR(Status);
++
++  return Status;
++}
+diff --git a/OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf b/OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
+new file mode 100644
+index 0000000000..6caf29db37
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
+@@ -0,0 +1,50 @@
++#/* @file
++#  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++#
++#  This program and the accompanying materials #  are licensed and made
++#  available under the terms and conditions of the BSD License which
++#  accompanies this distribution. The full text of the license may be
++#  found at http://opensource.org/licenses/bsd-license.php
++#
++#  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++#  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++#
++#*/
++
++[Defines]
++  INF_VERSION                    = 0x00010005
++  BASE_NAME                      = AppleSupportLib
++  FILE_GUID                      = CEC880AF-68DF-4CDF-BBA5-FF9B202382AB
++  MODULE_TYPE                    = BASE
++  VERSION_STRING                 = 1.0
++  LIBRARY_CLASS                  = AppleSupportLib
++
++#
++# The following information is for reference only and not required by the build tools.
++#
++#  VALID_ARCHITECTURES           = IA32 X64
++#
++
++[Sources]
++  AppleSupport.c
++  Console.c
++  Datahub.c
++  Bds.c
++
++[Packages]
++  MdePkg/MdePkg.dec
++  OvmfPkg/OvmfPkg.dec
++  IntelFrameworkPkg/IntelFrameworkPkg.dec
++  IntelFrameworkModulePkg/IntelFrameworkModulePkg.dec
++  EdkCompatibilityPkg/EdkCompatibilityPkg.dec
++
++[LibraryClasses]
++  UefiBootServicesTableLib
++  BaseLib
++  DebugLib
++  MemoryAllocationLib
++  BaseMemoryLib
++
++[Protocols]
++  gEfiConsoleControlProtocolGuid
++  gEfiDataHubProtocolGuid
+diff --git a/OvmfPkg/Library/AppleSupportLib/Bds.c b/OvmfPkg/Library/AppleSupportLib/Bds.c
+new file mode 100644
+index 0000000000..88f74371ab
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Bds.c
+@@ -0,0 +1,151 @@
++#include "Common.h"
++#include "Bds.h"
++
++#include <PiDxe.h>
++
++#include <Library/DevicePathLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/GenericBdsLib.h>
++#include <Protocol/SimpleFileSystem.h>
++
++#include <Guid/FileInfo.h>
++
++EFI_STATUS
++BdsFileSystemLoadImage (
++  IN     EFI_HANDLE Handle,
++  IN     EFI_ALLOCATE_TYPE     Type,
++  IN OUT EFI_PHYSICAL_ADDRESS* Image,
++  OUT    UINTN                 *ImageSize
++  )
++{
++  EFI_STATUS                      Status;
++  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FsProtocol;
++  EFI_FILE_PROTOCOL               *Fs;
++  EFI_FILE_INFO                   *FileInfo;
++  EFI_FILE_PROTOCOL               *File;
++  UINTN                           Size;
++
++  /* FilePathDevicePath = (FILEPATH_DEVICE_PATH*)RemainingDevicePath; */
++
++  Status = gBS->HandleProtocol (Handle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&FsProtocol);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  // Try to Open the volume and get root directory
++  Status = FsProtocol->OpenVolume (FsProtocol, &Fs);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  File = NULL;
++  Status = Fs->Open (Fs, &File, EFI_CORESERVICES, EFI_FILE_MODE_READ, 0);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  Size = 0;
++  File->GetInfo (File, &gEfiFileInfoGuid, &Size, NULL);
++  FileInfo = AllocatePool (Size);
++  Status = File->GetInfo (File, &gEfiFileInfoGuid, &Size, FileInfo);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  // Get the file size
++  Size = FileInfo->FileSize;
++  if (ImageSize) {
++    *ImageSize = Size;
++  }
++  FreePool (FileInfo);
++
++  Status = gBS->AllocatePages (Type, EfiBootServicesCode, EFI_SIZE_TO_PAGES(Size), Image);
++  // Try to allocate in any pages if failed to allocate memory at the defined location
++  if ((Status == EFI_OUT_OF_RESOURCES) && (Type != AllocateAnyPages)) {
++    Status = gBS->AllocatePages (AllocateAnyPages, EfiBootServicesCode, EFI_SIZE_TO_PAGES(Size), Image);
++  }
++  if (!EFI_ERROR (Status)) {
++    Status = File->Read (File, &Size, (VOID*)(UINTN)(*Image));
++  }
++
++  return Status;
++}
++
++
++/**
++  Start an EFI Application from a Device Path
++
++  @param  ParentImageHandle     Handle of the calling image
++  @param  DevicePath            Location of the EFI Application
++
++  @retval EFI_SUCCESS           All drivers have been connected
++  @retval EFI_NOT_FOUND         The Linux kernel Device Path has not been found
++  @retval EFI_OUT_OF_RESOURCES  There is not enough resource memory to store the matching results.
++
++**/
++EFI_STATUS
++BdsStartEfiApplication (
++  IN EFI_HANDLE                  Handle,
++  IN EFI_HANDLE                  ParentImageHandle,
++  IN EFI_DEVICE_PATH_PROTOCOL    *DevicePath
++  )
++{
++  EFI_STATUS                   Status;
++  EFI_HANDLE                   ImageHandle;
++  EFI_PHYSICAL_ADDRESS         BinaryBuffer;
++  UINTN                        BinarySize;
++
++  // Find the nearest supported file loader
++  Status = BdsFileSystemLoadImage (Handle, AllocateAnyPages, &BinaryBuffer, &BinarySize);
++  if (EFI_ERROR (Status)) {
++    DEBUG((EFI_D_INFO, "== Bds could not load System image =="));
++    return Status;
++  }
++
++  // Load the image from the Buffer with Boot Services function
++  Status = gBS->LoadImage (TRUE, ParentImageHandle, DevicePath, (VOID*)(UINTN)BinaryBuffer, BinarySize, &ImageHandle);
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  // Before calling the image, enable the Watchdog Timer for  the 5 Minute period
++  gBS->SetWatchdogTimer (5 * 60, 0x0000, 0x00, NULL);
++  // Start the image
++  Status = gBS->StartImage (ImageHandle, NULL, NULL);
++  // Clear the Watchdog Timer after the image returns
++  gBS->SetWatchdogTimer (0x0000, 0x0000, 0x0000, NULL);
++
++  return Status;
++}
++
++
++EFI_STATUS
++BdsBootApple ()
++{
++  UINTN                           Index;
++  EFI_DEVICE_PATH_PROTOCOL        *TempDevicePath;
++  EFI_HANDLE                      *SimpleFileSystemHandles;
++  UINTN                           NumberSimpleFileSystemHandles;
++
++  gBS->LocateHandleBuffer (
++      ByProtocol,
++      &gEfiSimpleFileSystemProtocolGuid,
++      NULL,
++      &NumberSimpleFileSystemHandles,
++      &SimpleFileSystemHandles
++      );
++  DEBUG((EFI_D_INFO, "Number Device File System: %d\n", NumberSimpleFileSystemHandles));
++  for (Index = 0; Index < NumberSimpleFileSystemHandles; Index++) {
++    //
++    // Get the device path size of SimpleFileSystem handle
++    //
++    TempDevicePath = DevicePathFromHandle (SimpleFileSystemHandles[Index]);
++    BdsStartEfiApplication (
++      SimpleFileSystemHandles[Index],
++      gImageHandle,
++      TempDevicePath
++      );
++
++  }
++  return EFI_SUCCESS;
++}
+diff --git a/OvmfPkg/Library/AppleSupportLib/Bds.h b/OvmfPkg/Library/AppleSupportLib/Bds.h
+new file mode 100644
+index 0000000000..725d03b68e
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Bds.h
+@@ -0,0 +1,21 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++
++#ifndef _APPLESUPPORT_BDS_H_INCLUDED_
++#define _APPLESUPPORT_BDS_H_INCLUDED_
++
++#define EFI_CORESERVICES L"System\\Library\\CoreServices\\boot.efi"
++
++#endif
+diff --git a/OvmfPkg/Library/AppleSupportLib/Common.h b/OvmfPkg/Library/AppleSupportLib/Common.h
+new file mode 100644
+index 0000000000..725f2af3d6
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Common.h
+@@ -0,0 +1,24 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++
++#ifndef _APPLESUPPORT_COMMON_H_INCLUDED_
++#define _APPLESUPPORT_COMMON_H_INCLUDED_
++
++#include <Uefi.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/DebugLib.h>
++#include <Library/MemoryAllocationLib.h>
++
++#endif
+diff --git a/OvmfPkg/Library/AppleSupportLib/Console.c b/OvmfPkg/Library/AppleSupportLib/Console.c
+new file mode 100644
+index 0000000000..5f2330063f
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Console.c
+@@ -0,0 +1,86 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#include "Console.h"
++
++EFI_STATUS EFIAPI
++GetModeImpl(
++    IN  EFI_CONSOLE_CONTROL_PROTOCOL      *This,
++    OUT EFI_CONSOLE_CONTROL_SCREEN_MODE   *Mode,
++    OUT BOOLEAN                           *GopUgaExists,  OPTIONAL
++    OUT BOOLEAN                           *StdInLocked    OPTIONAL
++    )
++{
++  *Mode = EfiConsoleControlScreenGraphics;
++
++  if (GopUgaExists)
++    *GopUgaExists = TRUE;
++  if (StdInLocked)
++    *StdInLocked = FALSE;
++  return EFI_SUCCESS;
++}
++
++EFI_STATUS EFIAPI
++SetModeImpl(
++    IN  EFI_CONSOLE_CONTROL_PROTOCOL      *This,
++    IN  EFI_CONSOLE_CONTROL_SCREEN_MODE   Mode
++    )
++{
++  return EFI_SUCCESS;
++}
++
++EFI_STATUS EFIAPI
++LockStdInImpl(
++    IN  EFI_CONSOLE_CONTROL_PROTOCOL      *This,
++    IN CHAR16                             *Password
++    )
++{
++  return EFI_SUCCESS;
++}
++
++
++
++EFI_CONSOLE_CONTROL_PROTOCOL gConsoleController =
++{
++  GetModeImpl,
++  SetModeImpl,
++};
++
++/**
++  Install ConsoleControl protocol, which is needed for Apple's
++  boot.efi
++
++  @param  ImageHandle   of the loaded driver
++
++  @retval EFI_SUCCESS       Successfully installed protocol handler
++  @retval EFI_DEVICE_ERROR  ConsoleProtocol could not be installed
++
++**/
++EFI_STATUS
++EFIAPI
++InitializeConsoleControl (
++  IN EFI_HANDLE         ImageHandle
++  )
++{
++  EFI_STATUS                         Status;
++
++  Status = gBS->InstallMultipleProtocolInterfaces (
++      &ImageHandle,
++      &gEfiConsoleControlProtocolGuid,
++      &gConsoleController,
++      NULL
++      );
++
++  return Status;
++}
+diff --git a/OvmfPkg/Library/AppleSupportLib/Console.h b/OvmfPkg/Library/AppleSupportLib/Console.h
+new file mode 100644
+index 0000000000..dabf902ddf
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Console.h
+@@ -0,0 +1,28 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#ifndef _APPLESUPPORT_CONSOLE_H_INCLUDED_
++#define _APPLESUPPORT_CONSOLE_H_INCLUDED_
++
++#include "Common.h"
++
++#include <Protocol/ConsoleControl/ConsoleControl.h>
++
++EFI_STATUS
++EFIAPI
++InitializeConsoleControl (
++  IN EFI_HANDLE         ImageHandle
++  );
++
++#endif
+diff --git a/OvmfPkg/Library/AppleSupportLib/Datahub.c b/OvmfPkg/Library/AppleSupportLib/Datahub.c
+new file mode 100644
+index 0000000000..3f1ec5645d
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Datahub.c
+@@ -0,0 +1,104 @@
++/** @file
++*
++*  Copyright (c) 2011, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#include "Datahub.h"
++
++EFI_GUID gAppleSystemInfoProducerNameGuid = {0x64517CC8, 0x6561, 0x4051, {0xB0, 0x3C, 0x59, 0x64, 0xB6, 0x0F, 0x4C, 0x7A}};
++EFI_GUID gAppleFsbFrequencyPropertyGuid = {0xD1A04D55, 0x75B9, 0x41A3, {0x90, 0x36, 0x8F, 0x4A, 0x26, 0x1C, 0xBB, 0xA2}};
++EFI_GUID gAppleDevicePathsSupportedGuid = {0x5BB91CF7, 0xD816, 0x404B, {0x86, 0x72, 0x68, 0xF2, 0x7F, 0x78, 0x31, 0xDC}};
++
++typedef struct {
++  UINT32              DataNameSize;
++  UINT32              DataSize;
++} EFI_PROPERTY_SUBCLASS_RECORD;
++
++typedef struct {
++  EFI_SUBCLASS_TYPE1_HEADER   Header;
++  EFI_PROPERTY_SUBCLASS_RECORD  Record;
++} EFI_PROPERTY_SUBCLASS_DATA;
++
++
++EFI_STATUS
++SetEfiPlatformProperty (
++    IN EFI_DATA_HUB_PROTOCOL *DataHub,
++    IN CONST EFI_STRING Name,
++    EFI_GUID EfiPropertyGuid,
++    VOID *Data,
++    UINT32 DataSize
++    )
++{
++  EFI_STATUS Status;
++  UINT32 DataNameSize;
++  EFI_PROPERTY_SUBCLASS_DATA *DataRecord;
++
++  DataNameSize = (UINT32)StrSize(Name);
++
++  DataRecord = AllocateZeroPool (sizeof (EFI_PROPERTY_SUBCLASS_DATA) + DataNameSize + DataSize);
++  ASSERT (DataRecord != NULL);
++
++  DataRecord->Header.Version = EFI_DATA_RECORD_HEADER_VERSION;
++  DataRecord->Header.HeaderSize = sizeof(EFI_SUBCLASS_TYPE1_HEADER);
++  DataRecord->Header.Instance = 0xFFFF;
++  DataRecord->Header.SubInstance = 0xFFFF;
++  DataRecord->Header.RecordType = 0xFFFFFFFF;
++  DataRecord->Record.DataNameSize = DataNameSize;
++  DataRecord->Record.DataSize = DataSize;
++
++
++  CopyMem((UINT8 *)DataRecord + sizeof(EFI_PROPERTY_SUBCLASS_DATA), Name, DataNameSize);
++  CopyMem((UINT8 *)DataRecord + sizeof(EFI_PROPERTY_SUBCLASS_DATA) + DataNameSize, Data, DataSize);
++
++  Status = DataHub->LogData(DataHub, &EfiPropertyGuid, &gAppleSystemInfoProducerNameGuid,
++                             EFI_DATA_RECORD_CLASS_DATA,
++                             DataRecord,
++                             sizeof(EFI_PROPERTY_SUBCLASS_DATA) + DataNameSize + DataSize);
++
++  if (DataRecord) {
++    gBS->FreePool(DataRecord);
++  }
++
++  return Status;
++}
++
++/**
++  Initialize the DataHub protocols data for the xnu kernel to
++  detect an EFI boot.
++
++  @param  ImageHandle   of the loaded driver
++
++  @retval EFI_SUCCESS Source was updated to support Handler.
++  @retval EFI_DEVICE_ERROR  Hardware could not be programmed.
++
++**/
++EFI_STATUS
++EFIAPI
++InitializeDatahub (
++  IN EFI_HANDLE         ImageHandle
++  )
++{
++  EFI_STATUS                         Status;
++  EFI_DATA_HUB_PROTOCOL              *DataHub;
++
++  Status = gBS->LocateProtocol(&gEfiDataHubProtocolGuid, NULL, (VOID **)&DataHub);
++  ASSERT_EFI_ERROR(Status);
++
++  UINT64 FsbFrequency = 667000000;
++  UINT32 DevicePathsSupported = 1;
++
++  SetEfiPlatformProperty(DataHub, L"FSBFrequency", gAppleFsbFrequencyPropertyGuid, &FsbFrequency, sizeof(UINT64));
++  SetEfiPlatformProperty(DataHub, L"DevicePathsSupported", gAppleDevicePathsSupportedGuid, &DevicePathsSupported, sizeof(UINT32));
++  ASSERT_EFI_ERROR(Status);
++
++  return Status;
++}
+diff --git a/OvmfPkg/Library/AppleSupportLib/Datahub.h b/OvmfPkg/Library/AppleSupportLib/Datahub.h
+new file mode 100644
+index 0000000000..d7f8806bd7
+--- /dev/null
++++ b/OvmfPkg/Library/AppleSupportLib/Datahub.h
+@@ -0,0 +1,32 @@
++/** @file
++*
++*  Copyright (c) 2014, Reza Jelveh. All rights reserved.
++*
++*  This program and the accompanying materials
++*  are licensed and made available under the terms and conditions of the BSD License
++*  which accompanies this distribution.  The full text of the license may be found at
++*  http://opensource.org/licenses/bsd-license.php
++*
++*  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
++*  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
++*
++**/
++
++#ifndef _APPLESUPPORT_DATAHUB_H_INCLUDED_
++#define _APPLESUPPORT_DATAHUB_H_INCLUDED_
++
++#include "Common.h"
++
++#include <Library/BaseLib.h>
++#include <Library/BaseMemoryLib.h>
++#include <FrameworkDxe.h>
++#include <Guid/DataHubRecords.h>
++#include <Protocol/DataHub.h>
++
++EFI_STATUS
++EFIAPI
++InitializeDatahub (
++  IN EFI_HANDLE         ImageHandle
++  );
++
++#endif
+-- 
+2.15.0
+

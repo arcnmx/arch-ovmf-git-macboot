@@ -1,0 +1,195 @@
+From 51a293a1998485d520ffdcbfb49658e4d8cf16d8 Mon Sep 17 00:00:00 2001
+From: "Gabriel L. Somlo" <gsomlo@gmail.com>
+Date: Mon, 27 Mar 2017 19:15:00 -0400
+Subject: [PATCH 6/6] OvmfPkg: enable AppleSupport library for Ovmf firmware
+
+Contributed-under: TianoCore Contribution Agreement 1.0
+Signed-off-by: Reza Jelveh <reza.jelveh@tuhh.de>
+Signed-off-by: Gabriel Somlo <gsomlo@gmail.com>
+---
+ OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c           | 10 ++++++++++
+ OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.h           |  1 +
+ .../Library/PlatformBootManagerLib/PlatformBootManagerLib.inf  |  1 +
+ OvmfPkg/OvmfPkgIa32.dsc                                        |  8 ++++++++
+ OvmfPkg/OvmfPkgIa32.fdf                                        |  3 +++
+ OvmfPkg/OvmfPkgIa32X64.dsc                                     |  8 ++++++++
+ OvmfPkg/OvmfPkgIa32X64.fdf                                     |  3 +++
+ OvmfPkg/OvmfPkgX64.dsc                                         |  8 ++++++++
+ OvmfPkg/OvmfPkgX64.fdf                                         |  3 +++
+ 9 files changed, 45 insertions(+)
+
+diff --git a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
+index 025252e72b..4f6b5c3a22 100644
+--- a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
++++ b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
+@@ -380,6 +380,11 @@ Returns:
+     SaveS3BootScript ();
+   }
+ 
++  //
++  // Initialize AppleSupport library
++  //
++  InitializeAppleSupport (gImageHandle, gST);
++
+   //
+   // Prevent further changes to LockBoxes or SMRAM.
+   //
+@@ -1474,6 +1479,11 @@ Routine Description:
+ 
+   RemoveStaleFvFileOptions ();
+   SetBootOrderFromQemu ();
++
++  //
++  // Locate and launch Apple's OS X bootloader
++  //
++  BdsBootApple ();
+ }
+ 
+ /**
+diff --git a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.h b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.h
+index 97ffbb5148..fde56e0de9 100644
+--- a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.h
++++ b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.h
+@@ -50,6 +50,7 @@ Abstract:
+ #include <Library/QemuFwCfgLib.h>
+ #include <Library/QemuFwCfgS3Lib.h>
+ #include <Library/QemuBootOrderLib.h>
++#include <Library/AppleSupportLib.h>
+ 
+ #include <Protocol/Decompress.h>
+ #include <Protocol/PciIo.h>
+diff --git a/OvmfPkg/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf b/OvmfPkg/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
+index 27789b7377..567525b178 100644
+--- a/OvmfPkg/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
++++ b/OvmfPkg/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
+@@ -40,6 +40,7 @@
+   OvmfPkg/OvmfPkg.dec
+ 
+ [LibraryClasses]
++  AppleSupportLib
+   BaseLib
+   MemoryAllocationLib
+   UefiBootServicesTableLib
+diff --git a/OvmfPkg/OvmfPkgIa32.dsc b/OvmfPkg/OvmfPkgIa32.dsc
+index c2f534fdbf..50e7014727 100644
+--- a/OvmfPkg/OvmfPkgIa32.dsc
++++ b/OvmfPkg/OvmfPkgIa32.dsc
+@@ -198,6 +198,8 @@
+   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
+   XenHypercallLib|OvmfPkg/Library/XenHypercallLib/XenHypercallLib.inf
+ 
++  AppleSupportLib|OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
++
+ [LibraryClasses.common]
+   BaseCryptLib|CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
+ 
+@@ -726,6 +728,12 @@
+   MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+   MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++  #
++  # Apple Support
++  #
++  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+   #
+   # Network Support
+   #
+diff --git a/OvmfPkg/OvmfPkgIa32.fdf b/OvmfPkg/OvmfPkgIa32.fdf
+index 7515224118..8574834f94 100644
+--- a/OvmfPkg/OvmfPkgIa32.fdf
++++ b/OvmfPkg/OvmfPkgIa32.fdf
+@@ -281,6 +281,9 @@ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++INF  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++INF  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+ INF  FatPkg/EnhancedFatDxe/Fat.inf
+ INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+ 
+diff --git a/OvmfPkg/OvmfPkgIa32X64.dsc b/OvmfPkg/OvmfPkgIa32X64.dsc
+index 9f300a2e6f..d68260de6c 100644
+--- a/OvmfPkg/OvmfPkgIa32X64.dsc
++++ b/OvmfPkg/OvmfPkgIa32X64.dsc
+@@ -203,6 +203,8 @@
+   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
+   XenHypercallLib|OvmfPkg/Library/XenHypercallLib/XenHypercallLib.inf
+ 
++  AppleSupportLib|OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
++
+ [LibraryClasses.common]
+   BaseCryptLib|CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
+ 
+@@ -735,6 +737,12 @@
+   MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+   MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++  #
++  # Apple Support
++  #
++  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+   #
+   # Network Support
+   #
+diff --git a/OvmfPkg/OvmfPkgIa32X64.fdf b/OvmfPkg/OvmfPkgIa32X64.fdf
+index f1a2044fb7..dd8b492be1 100644
+--- a/OvmfPkg/OvmfPkgIa32X64.fdf
++++ b/OvmfPkg/OvmfPkgIa32X64.fdf
+@@ -282,6 +282,9 @@ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++INF  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++INF  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+ INF  FatPkg/EnhancedFatDxe/Fat.inf
+ INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+ 
+diff --git a/OvmfPkg/OvmfPkgX64.dsc b/OvmfPkg/OvmfPkgX64.dsc
+index 1ffcf37f8b..89f54356af 100644
+--- a/OvmfPkg/OvmfPkgX64.dsc
++++ b/OvmfPkg/OvmfPkgX64.dsc
+@@ -203,6 +203,8 @@
+   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
+   XenHypercallLib|OvmfPkg/Library/XenHypercallLib/XenHypercallLib.inf
+ 
++  AppleSupportLib|OvmfPkg/Library/AppleSupportLib/AppleSupportLib.inf
++
+ [LibraryClasses.common]
+   BaseCryptLib|CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
+ 
+@@ -733,6 +735,12 @@
+   MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+   MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++  #
++  # Apple Support
++  #
++  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+   #
+   # Network Support
+   #
+diff --git a/OvmfPkg/OvmfPkgX64.fdf b/OvmfPkg/OvmfPkgX64.fdf
+index 32000a3b93..d5664512d3 100644
+--- a/OvmfPkg/OvmfPkgX64.fdf
++++ b/OvmfPkg/OvmfPkgX64.fdf
+@@ -282,6 +282,9 @@ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
++INF  OvmfPkg/FswHfsPlus/FswHfsPlus.inf
++INF  IntelFrameworkModulePkg/Universal/DataHubDxe/DataHubDxe.inf
++
+ INF  FatPkg/EnhancedFatDxe/Fat.inf
+ INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+ 
+-- 
+2.15.0
+

@@ -1,0 +1,5 @@
+/edk2/
+/pkg/
+/src/
+/openssl-*.tar.gz
+/*.pkg*
