@@ -69,5 +69,5 @@ package() {
 
 # makepkg -g >> PKGBUILD
 sha256sums=('SKIP'
-            'de52c72c0578167340307a60dba3ad4d96a53c5aec8592c7fe377f6ca1d5cb71'
+            'bed5fec14dde30bbe0f5490bd824c101cd2bd50e8db576c688f63725e2db89b5'
             '1f8cb879bd1e8548ad9efa8dbbaa280e753130b2e5851ab69238218633a39bd3')
