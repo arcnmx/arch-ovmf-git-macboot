@@ -1,0 +1,12 @@
+diff -ruN a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
+--- a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c	2018-01-14 16:38:12.890873529 -0500
++++ b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c	2018-01-14 16:38:50.048264367 -0500
+@@ -1483,7 +1483,7 @@
+   //
+   // Locate and launch apple's OS X bootloader
+   //
+-  BdsBootApple ();
++  //BdsBootApple ();
+ }
+ 
+ /**

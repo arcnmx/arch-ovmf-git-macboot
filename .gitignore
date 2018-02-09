@@ -1,5 +1,5 @@
 /edk2/
 /pkg/
 /src/
-/openssl-*.tar.gz
+/macboot.patch
 /*.pkg*
