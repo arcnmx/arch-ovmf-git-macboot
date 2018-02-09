@@ -14,7 +14,6 @@ source=('edk2::git+https://github.com/tianocore/edk2.git#branch=master'
         'macboot.patch::https://github.com/gsomlo/edk2/compare/master...gls-miscopt.patch'
         'macboot-undo.patch'
 )
-sha256sums=('SKIP')
 options=(!makeflags)
 _toolchain_opt=GCC5
 
@@ -67,3 +66,8 @@ package() {
   install -D -m644 "${srcdir}"/edk2/Build/OvmfX64/RELEASE_${_toolchain_opt}/FV/OVMF.fd "${pkgdir}"/usr/share/ovmf/x64/OVMF.fd
   install -D -m644 "${srcdir}"/edk2/OvmfPkg/License.txt "${pkgdir}"/usr/share/licenses/ovmf/License.txt
 }
+
+# makepkg -g >> PKGBUILD
+sha256sums=('SKIP'
+            'de52c72c0578167340307a60dba3ad4d96a53c5aec8592c7fe377f6ca1d5cb71'
+            '1f8cb879bd1e8548ad9efa8dbbaa280e753130b2e5851ab69238218633a39bd3')
